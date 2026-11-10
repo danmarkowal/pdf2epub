@@ -125,6 +125,59 @@ and so on; press Enter to accept each default). It therefore needs a terminal â€
 run it non-interactively and it will fail with `EOFError`. Use `--skip-epub` to
 produce only markdown without any prompts.
 
+Each chapter starts on a new page in the EPUB. The book's structure is read
+from what its headings say rather than their size:
+
+- **Volumes, parts and chapters**: labelled headings ("Volume II", "Part Two",
+  "Chapter 3", "Twelve", "IV") form the hierarchy, and chapters are nested
+  under the volume or part before them. A number and a title set as separate
+  headings ("Chapter 1" / "In the Home of My Parents") are treated as one.
+  Volume and part headings get a page of their own.
+- **Other sections**: standard ones ("Preface", "Author's Introduction",
+  "Epilogue", ...) are sections too. Notes that recur after chapters stay with
+  their chapter as endnotes.
+- Books without numbered chapters are split at headings that introduce a
+  substantial amount of text. Headings that repeat the book's title never
+  count, and sentences mistaken for headings become ordinary paragraphs.
+
+Chapter and volume headings follow the PDF's alignment, font, weight and
+relative size when these can be read from it; otherwise they are centred, with
+the number in small capitals above a larger title.
+
+The pages before the first chapter are laid out like a printed book:
+
+- **Cover**: the PDF's first page, used whole. Text and pictures marker
+  extracts from cover pages (OCR of the cover art, cropped pictures), duplicate
+  covers and blank pages are left out. If the PDF has no cover picture, a plain
+  typographic cover is made from the title and author.
+- **Title page**: the title once, with the author and other credits
+  ("Translated by ...") centred beneath it. Generated from the metadata if the
+  book has none.
+- **Copyright notice, dedication and epigraphs** (a quotation followed by a
+  dash credit such as "â€”Lawrence Durrell"), each on a page of their own.
+- **Contents**, then any untitled text before the first chapter, such as a
+  preface. You are asked for its title, with a suggestion taken from the text
+  ("Preface", "Foreword", ...), so it can be found in the contents.
+
+At the back, untitled biographies of the people credited on the title page
+become "About the Author" and "About the Translator" sections.
+
+If the book has no contents page of its own, you are asked whether to add one
+(the answers to these questions are remembered in `description.json`). It
+lists each chapter's number on a small line above its title, chapters nested
+under their volume or part, and the page each starts on in the source PDF
+(using the PDF's own page labels when it has them).
+
+Paragraphs and lists that the PDF splits across a page break are rejoined
+automatically, and numbered lists keep their own numbering ("(1)", "2.").
+Sign-offs ("James Murphy, Abbots Langley, February 1939") and datelines
+("The Fortress, Landsberg a/L., October 16th, 1924") are set as signatures,
+and chapter endnotes in smaller type. Where the PDF starts a new section with
+only extra space instead of a heading, the EPUB marks the break with a short
+rule, so the sections don't run together.
+To apply this to markdown produced by an older version without re-running the
+slow PDF conversion, rebuild the EPUB with `--skip-md`.
+
 ### Advanced Options
 
 ```bash
@@ -135,7 +188,14 @@ Options:
   --start-page INT         Page number to start from
   --skip-epub              Skip EPUB generation, only create markdown
   --skip-md                Skip markdown generation, use existing markdown files
+  --reconvert              Convert the PDF again even if an earlier conversion
+                           of it can be reused
 ```
+
+Converting the PDF to markdown is by far the slowest step (marker's layout
+model reads every page). If the same, unchanged PDF was converted before with
+the same page options, that conversion is reused, so running the program
+again on a book takes seconds. The cleanup and EPUB layout always run again.
 
 If `input_path` is omitted, all PDFs in `./input/` are processed.
 

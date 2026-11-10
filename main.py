@@ -53,6 +53,11 @@ def main():
         action='store_true',
         help='Skip markdown generation, use existing markdown files'
     )
+    parser.add_argument(
+        '--reconvert',
+        action='store_true',
+        help='Convert the PDF again even if an earlier conversion of it can be reused'
+    )
     
     args = parser.parse_args()
     
@@ -85,8 +90,14 @@ def main():
                     continue
                 print(f"Using existing markdown files from: {markdown_dir}")
                 
-            # Convert PDF to Markdown unless skipped
-            if not args.skip_md:
+            # Convert PDF to Markdown unless skipped. Converting is by far the
+            # slowest step, so an earlier conversion of the same, unchanged PDF
+            # with the same page options is reused.
+            if not args.skip_md and not args.reconvert and pdf2md.can_reuse_conversion(
+                    pdf_path, markdown_dir, args.max_pages, args.start_page):
+                print(f"Reusing the earlier conversion in {markdown_dir} "
+                      "(the PDF hasn't changed; use --reconvert to convert it again)")
+            elif not args.skip_md:
                 print("Converting PDF to Markdown...")
                 pdf2md.convert_pdf(
                     str(pdf_path),
@@ -98,7 +109,7 @@ def main():
             # Convert Markdown to EPUB unless skipped
             if not args.skip_epub:
                 print("Converting Markdown to EPUB...")
-                mark2epub.convert_to_epub(markdown_dir, output_path)
+                mark2epub.convert_to_epub(markdown_dir, output_path, pdf_path)
                 
         except Exception as e:
             print(f"Error processing {pdf_path.name}: {str(e)}", file=sys.stderr)

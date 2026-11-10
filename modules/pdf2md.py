@@ -1,8 +1,10 @@
 from pathlib import Path
+import os
 import sys
 import json
 from PIL import Image
 import io
+from modules.cleanup import repair_page_breaks
 
 def get_default_output_dir(input_path: Path) -> Path:
     """
@@ -74,6 +76,50 @@ def save_images(images: dict, image_dir: Path) -> None:
     else:
         print("No valid images were found to save")
 
+# marker's models take a few seconds to load; load them once per run, not
+# once per PDF
+_models = None
+
+# Text extraction runs in parallel processes; marker's default is 4
+TEXT_EXTRACTION_WORKERS = max(1, min(os.cpu_count() or 4, 12))
+
+
+def _load_models():
+    global _models
+    if _models is None:
+        from marker.models import create_model_dict
+        _models = create_model_dict()
+    return _models
+
+
+def conversion_record(input_path, max_pages: int = None, start_page: int = None) -> dict:
+    """What a conversion was made from: the PDF (by size and modification
+    time) and the page options."""
+    stat = Path(input_path).stat()
+    return {"source_size": stat.st_size, "source_mtime": int(stat.st_mtime),
+            "max_pages": max_pages, "start_page": start_page}
+
+
+def can_reuse_conversion(input_path, output_dir: Path, max_pages: int = None, start_page: int = None) -> bool:
+    """Whether output_dir already holds the markdown for this PDF, converted
+    with the same page options, so the slow conversion can be skipped."""
+    stem = Path(input_path).stem
+    markdown_file = output_dir / f"{stem}.md"
+    metadata_file = output_dir / f"{stem}_metadata.json"
+    if not markdown_file.exists() or not metadata_file.exists():
+        return False
+    try:
+        recorded = json.loads(metadata_file.read_text(encoding="utf-8")).get("pdf2epub_conversion")
+    except (OSError, ValueError):
+        return False
+    if recorded is not None:
+        return recorded == conversion_record(input_path, max_pages, start_page)
+    # Converted before conversions were recorded: reuse it if the whole PDF
+    # was converted after the PDF last changed
+    return (max_pages is None and start_page is None
+            and markdown_file.stat().st_mtime >= Path(input_path).stat().st_mtime)
+
+
 def convert_pdf(
     input_path: str,
     output_dir: Path,
@@ -84,16 +130,15 @@ def convert_pdf(
     Convert a single PDF file to markdown format with enhanced image handling.
     """
     try:
-        from marker.models import create_model_dict
         from marker.converters.pdf import PdfConverter
 
-        models = create_model_dict()
+        models = _load_models()
 
         # Build page_range config. marker-pdf 1.x requires an explicit list of
         # page indices; there is no "start to end" shorthand. If start_page is
         # given without max_pages we cannot construct the range without knowing
         # the document's page count, so we warn and process all pages instead.
-        config = {}
+        config = {"pdftext_workers": TEXT_EXTRACTION_WORKERS}
         if max_pages is not None:
             s = start_page or 0
             config["page_range"] = list(range(s, s + max_pages))
@@ -106,9 +151,12 @@ def convert_pdf(
         converter = PdfConverter(config=config, artifact_dict=models)
         rendered = converter(input_path)
 
-        full_text = rendered.markdown
+        full_text, joins = repair_page_breaks(rendered.markdown)
+        if joins:
+            print(f"Rejoined {joins} paragraphs split across pages")
         images = rendered.images
-        metadata = rendered.metadata
+        metadata = dict(rendered.metadata)
+        metadata["pdf2epub_conversion"] = conversion_record(input_path, max_pages, start_page)
 
         # All output will go to the output directory
         output_dir.mkdir(parents=True, exist_ok=True)
